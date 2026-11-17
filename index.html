@@ -147,7 +147,7 @@
       <h1 id="headerTitle" class="text-lg font-extrabold text-[#16211B] leading-tight">الرئيسية</h1>
       <div class="flex items-center justify-center gap-1.5 text-[11px] text-[#4B5E53]">
         <span id="offlineBadge" class="w-2 h-2 rounded-full bg-emerald-600 inline-block"></span>
-        <span>AGRI PYRAMIDS • FieldOS</span>
+        <span>AGRI PYRAMIDS • FieldOS v2</span>
       </div>
     </div>
     <div class="flex items-center gap-1.5">
@@ -165,7 +165,7 @@
   <aside id="sideDrawer" class="fixed top-0 right-0 bottom-0 z-50 w-72 bg-[#F6F8F6] shadow-2xl transform translate-x-full transition-transform duration-200 flex flex-col no-print">
     <div class="bg-[#0E5A36] text-white p-5">
       <div class="flex items-center justify-between mb-2">
-        <span class="text-xs bg-white/15 px-2.5 py-1 rounded-full font-bold">FieldOS • PWA</span>
+        <span class="text-xs bg-white/15 px-2.5 py-1 rounded-full font-bold">FieldOS • PWA v2</span>
         <button onclick="toggleDrawer(false)" class="text-white/80 text-xl font-bold">✕</button>
       </div>
       <div class="font-extrabold text-lg">AGRI PYRAMIDS</div>
@@ -246,12 +246,22 @@ const STORES = [
   'stations', 'trials', 'visits', 'expenses', 'settings'
 ];
 
+const TRIAL_STAGES = [
+  'إنبات / مشتل',
+  'نمو خضري',
+  'تزهير وعقد',
+  'جمع وحصاد',
+  'موصى به للتسجيل ⭐',
+  'مستبعد ❌'
+];
+
 let db = null;
 let state = {
   route: 'home',
   salesTab: 'invoices',
   invTab: 'stock',
-  trialsTab: 'codes',
+  trialsTab: 'stations',
+  trialStationFilter: 'all',
   customerSearch: '',
   stockFilter: 'all',
   data: {}
@@ -403,6 +413,8 @@ async function seedDemoIfNeeded() {
     owner: 'م. عبد الرحمن',
     area: 'كفر سعد',
     crop: 'خيار صوب',
+    status: 'active',
+    stopReason: '',
     lat: '31.3610',
     lng: '31.6890'
   };
@@ -413,10 +425,26 @@ async function seedDemoIfNeeded() {
     code: 'AP-CU-X99',
     hybridName: 'هجين خيار تجريبي X99',
     stationId: 'sta_1',
+    productId: 'prd_2',
     competitor: 'هجين منافس تجاري A',
     plantingDate: todayStr(-25),
+    stage: 'تزهير وعقد',
     scores: { earliness: 5, vigor: 4, yield: 5, tolerance: 4 },
-    notes: 'عقد مبكر جداً وسلاميات قصيرة ومقاومة ممتازة للبياض الزغبي'
+    notes: 'عقد مبكر جداً وسلاميات قصيرة ومقاومة ممتازة للبياض الزغبي',
+    history: [
+      {
+        date: todayStr(-25),
+        stage: 'إنبات / مشتل',
+        avgScore: 4.5,
+        notes: 'بداية الزراعة ونسبة إنبات 98%'
+      },
+      {
+        date: todayStr(-1),
+        stage: 'تزهير وعقد',
+        avgScore: 4.5,
+        notes: 'عقد مبكر جداً وسلاميات قصيرة ومقاومة ممتازة للبياض الزغبي'
+      }
+    ]
   });
 
   await putRecord('visits', {
@@ -424,8 +452,11 @@ async function seedDemoIfNeeded() {
     date: todayStr(-1),
     customerId: 'cust_1',
     stationId: 'sta_1',
-    crop: 'كوسة نعمة F1',
-    notes: 'تم فحص الإنبات في المشتل، النسبة 98% وتمت التوصية ببرنامج تسميد فوسفور',
+    crop: 'خيار صوب',
+    inspectedTrials: [
+      { trialId: 'trl_1', code: 'AP-CU-X99', hybridName: 'هجين خيار تجريبي X99', stage: 'تزهير وعقد', avgScore: 4.5, note: 'نمو قوي وتبكير ملحوظ' }
+    ],
+    notes: 'تم فحص المحطة، نسبة الإنبات والنمو ممتازة وتمت التوصية ببرنامج تسميد فوسفور',
     nextFollowUp: todayStr(3),
     photo: ''
   });
@@ -691,8 +722,11 @@ function renderHome() {
   ` : '';
 
   const limitDate = todayStr(7);
+  const activeStationIds = new Set(
+    state.data.stations.filter(s => (s.status || 'active') === 'active').map(s => s.id)
+  );
   const dueVisits = state.data.visits
-    .filter(v => v.nextFollowUp && v.nextFollowUp <= limitDate)
+    .filter(v => v.nextFollowUp && v.nextFollowUp <= limitDate && (!v.stationId || activeStationIds.has(v.stationId)))
     .sort((a, b) => a.nextFollowUp.localeCompare(b.nextFollowUp));
 
   const followupsHtml = dueVisits.length === 0
@@ -700,11 +734,12 @@ function renderHome() {
     : `<div class="space-y-2 mt-2.5">
         ${dueVisits.map(v => {
           const cust = state.data.customers.find(c => c.id === v.customerId);
+          const sta = state.data.stations.find(s => s.id === v.stationId);
           const isOverdue = v.nextFollowUp < todayStr(0);
           return `
             <div class="bg-white/80 rounded-xl p-2.5 flex items-center justify-between gap-2">
               <div>
-                <div class="text-xs font-extrabold text-[#1F1630]">${cust ? cust.name : 'زيارة محطة'}</div>
+                <div class="text-xs font-extrabold text-[#1F1630]">${sta ? sta.name : (cust ? cust.name : 'زيارة محطة')}</div>
                 <div class="text-[11px] text-[#53466B]">${v.crop || ''} • موعد: <span class="font-bold ${isOverdue ? 'text-red-600' : ''}">${v.nextFollowUp}</span></div>
               </div>
               <button onclick="openNewVisitModal('${v.customerId || ''}', '${v.stationId || ''}')" class="text-[11px] bg-[#5E4B8B] text-white px-2.5 py-1.5 rounded-lg font-bold">تسجيل</button>
@@ -730,7 +765,7 @@ function renderHome() {
     <div>
       <div class="flex items-center justify-between mb-2.5">
         <h2 class="text-base font-extrabold text-[#16211B]">الوصول السريع</h2>
-        <span class="text-[11px] text-[#4B5E53]">${state.data.customers.length} عميل • ${state.data.trials.length} تجربة</span>
+        <span class="text-[11px] text-[#4B5E53]">${state.data.stations.length} محطة • ${state.data.trials.length} كود تجربة</span>
       </div>
       <div class="grid grid-cols-3 gap-2.5">
         ${tiles.map(t => `
@@ -1194,7 +1229,6 @@ async function submitInvoice(bypassGuard) {
   if (mode === 'cash') paidAmount = total;
   else if (mode === 'partial') paidAmount = Math.min(total, Number(document.getElementById('invPaidAmt').value || 0));
 
-  // Stock availability check
   for (const row of draftInvoiceItems) {
     const avail = getStockQty(warehouseId, row.productId);
     if (row.qty > avail) {
@@ -1203,7 +1237,6 @@ async function submitInvoice(bypassGuard) {
     }
   }
 
-  // Credit Limit & Overdue Guard
   const cust = state.data.customers.find(c => c.id === customerId);
   const currentBal = getCustomerBalance(customerId);
   const projectedBal = currentBal + (total - paidAmount);
@@ -1571,24 +1604,41 @@ async function saveTransfer() {
   showToast('تم التحويل المخزني بنجاح');
 }
 
-// ==================== FIELD VISITS & COMPRESSED PHOTOS ====================
+// ==================== FIELD VISITS (LINKED TO STATIONS & TRIAL CODES) ====================
 let tempCompressedPhoto = '';
 
 function renderField() {
   return `
-    <button onclick="openNewVisitModal()" class="btn-primary w-full py-3 text-sm">+ تسجيل زيارة ميدانية وتوصية فنية</button>
+    <button onclick="openNewVisitModal()" class="btn-primary w-full py-3 text-sm">+ تسجيل زيارة ميدانية وتقييم أصناف</button>
     <div class="space-y-3">
       ${state.data.visits.slice().reverse().map(v => {
         const cust = state.data.customers.find(c => c.id === v.customerId);
         const sta = state.data.stations.find(s => s.id === v.stationId);
+        const inspected = Array.isArray(v.inspectedTrials) ? v.inspectedTrials : [];
         return `
           <div class="m3-card p-3.5 text-xs space-y-2">
             <div class="flex items-center justify-between">
-              <div class="font-extrabold text-sm text-[#0E5A36]">${cust ? cust.name : (sta ? sta.name : 'زيارة ميدانية')}</div>
+              <div class="font-extrabold text-sm text-[#0E5A36]">${sta ? sta.name : (cust ? cust.name : 'زيارة ميدانية')}</div>
               <span class="text-[11px] text-gray-500">${v.date}</span>
             </div>
-            ${sta ? `<div class="text-[11px] text-[#5E4B8B] font-bold">🧪 محطة: ${sta.name}</div>` : ''}
-            <div class="text-[11px] font-bold text-gray-700">🌱 الصنف / المحصول: ${v.crop || '-'}</div>
+            ${sta ? `
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] text-[#5E4B8B] font-bold">🧪 محطة: ${sta.name}</span>
+                <button onclick="openStationDetailModal('${sta.id}')" class="text-[11px] underline text-[#0E5A36] font-bold">فتح ملف المحطة</button>
+              </div>
+            ` : ''}
+            ${v.crop ? `<div class="text-[11px] font-bold text-gray-700">🌱 المحصول: ${v.crop}</div>` : ''}
+            ${inspected.length > 0 ? `
+              <div class="bg-[#E2EFE7]/60 p-2.5 rounded-xl space-y-1">
+                <div class="text-[10px] font-extrabold text-[#0E5A36]">الأصناف / الأكواد المفحوصة في الزيارة:</div>
+                ${inspected.map(it => `
+                  <div class="text-[11px] flex items-center justify-between bg-white/80 px-2 py-1 rounded-lg">
+                    <span><strong>[${it.code}]</strong> ${it.hybridName}</span>
+                    <span class="badge-pill bg-[#E2EFE7] text-[#0E5A36]">${it.stage || ''} • ${Number(it.avgScore || 0).toFixed(1)}★</span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
             <p class="text-xs text-gray-700 bg-[#F6F8F6] p-2.5 rounded-xl leading-relaxed">${v.notes}</p>
             ${v.photo ? `<img src="${v.photo}" alt="صورة الزيارة" class="w-full h-44 object-cover rounded-xl border" />` : ''}
             ${v.nextFollowUp ? `<div class="text-[11px] font-bold text-[#5E4B8B]">📅 المتابعة القادمة: ${v.nextFollowUp}</div>` : ''}
@@ -1599,15 +1649,69 @@ function renderField() {
   `;
 }
 
+function renderStationTrialCheckboxes(stationId) {
+  const container = document.getElementById('visitStationTrialsBox');
+  if (!container) return;
+  if (!stationId) {
+    container.innerHTML = '';
+    return;
+  }
+  const stationTrials = state.data.trials.filter(t => t.stationId === stationId);
+  if (stationTrials.length === 0) {
+    container.innerHTML = `
+      <div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-[11px] text-amber-900 flex items-center justify-between">
+        <span>لا توجد أكواد أصناف مسجلة في هذه المحطة بعد.</span>
+        <button type="button" onclick="openTrialModal('${stationId}')" class="bg-amber-600 text-white px-2.5 py-1 rounded-lg font-bold">+ إضافة صنف</button>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="bg-[#E2EFE7]/60 border border-[#0E5A36]/20 p-3 rounded-2xl space-y-2.5">
+      <div class="font-extrabold text-[#0E5A36] text-xs">🧬 تقييم الأصناف / الأكواد داخل المحطة في هذه الزيارة:</div>
+      ${stationTrials.map(t => `
+        <div class="bg-white p-2.5 rounded-xl border border-[#E2E8E4] space-y-2">
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="font-extrabold text-xs"><input type="checkbox" class="v-trial-chk accent-[#0E5A36] ml-1.5" value="${t.id}" checked /> [${t.code}] ${t.hybridName}</span>
+            <span class="text-[10px] text-gray-500">الحالي: ${calcTrialAvg(t.scores).toFixed(1)}★</span>
+          </label>
+          <div class="grid grid-cols-2 gap-1.5">
+            <div>
+              <span class="text-[10px] text-gray-500 block">حالة الصنف الآن</span>
+              <select id="vtStage_${t.id}" class="input-field py-1 text-[11px]">
+                ${TRIAL_STAGES.map(st => `<option value="${st}" ${(t.stage || 'نمو خضري') === st ? 'selected' : ''}>${st}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <span class="text-[10px] text-gray-500 block">تحديث التقييم العام (1-5)</span>
+              <input id="vtScore_${t.id}" type="number" step="0.5" min="1" max="5" value="${calcTrialAvg(t.scores).toFixed(1)}" class="input-field py-1 text-[11px]" />
+            </div>
+          </div>
+          <input id="vtNote_${t.id}" class="input-field py-1 text-[11px]" placeholder="ملاحظة خاصة بهذا الصنف في الزيارة..." />
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function openNewVisitModal(preCust = '', preStation = '') {
   tempCompressedPhoto = '';
+  const selectedStation = state.data.stations.find(s => s.id === preStation);
   openModal(`
     <div class="flex items-center justify-between mb-3">
-      <h3 class="font-extrabold text-base text-[#0E5A36]">تسجيل زيارة ميدانية</h3>
+      <h3 class="font-extrabold text-base text-[#0E5A36]">تسجيل زيارة ميدانية ومتابعة تجربة</h3>
       <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
     </div>
     <div class="space-y-3 text-xs">
       <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="font-bold block mb-1">محطة التجارب</label>
+          <select id="vStation" onchange="renderStationTrialCheckboxes(this.value)" class="input-field">
+            <option value="">-- بدون محطة --</option>
+            ${state.data.stations.map(s => `<option value="${s.id}" ${s.id===preStation?'selected':''}>${s.name}</option>`).join('')}
+          </select>
+        </div>
         <div>
           <label class="font-bold block mb-1">العميل</label>
           <select id="vCust" class="input-field">
@@ -1615,18 +1719,14 @@ function openNewVisitModal(preCust = '', preStation = '') {
             ${state.data.customers.map(c => `<option value="${c.id}" ${c.id===preCust?'selected':''}>${c.name}</option>`).join('')}
           </select>
         </div>
-        <div>
-          <label class="font-bold block mb-1">محطة التجارب</label>
-          <select id="vStation" class="input-field">
-            <option value="">-- بدون محطة --</option>
-            ${state.data.stations.map(s => `<option value="${s.id}" ${s.id===preStation?'selected':''}>${s.name}</option>`).join('')}
-          </select>
-        </div>
       </div>
+
+      <div id="visitStationTrialsBox"></div>
+
       <div class="grid grid-cols-2 gap-2">
         <div>
-          <label class="font-bold block mb-1">الصنف / الهجين *</label>
-          <input id="vCrop" class="input-field" placeholder="كوسة نعمة F1" />
+          <label class="font-bold block mb-1">المحصول / الصنف</label>
+          <input id="vCrop" value="${selectedStation ? (selectedStation.crop || '') : ''}" class="input-field" placeholder="بروكلي / كوسة..." />
         </div>
         <div>
           <label class="font-bold block mb-1">موعد المتابعة القادمة</label>
@@ -1634,17 +1734,18 @@ function openNewVisitModal(preCust = '', preStation = '') {
         </div>
       </div>
       <div>
-        <label class="font-bold block mb-1">الملاحظات الفنية والتوصية *</label>
-        <textarea id="vNotes" rows="3" class="input-field" placeholder="حالة النمو، الإصابات الحشرية/الفطرية، التوصية..."></textarea>
+        <label class="font-bold block mb-1">الملاحظات الفنية والتوصية العامة *</label>
+        <textarea id="vNotes" rows="3" class="input-field" placeholder="حالة النمو العام بالمحطة، التسميد، الوقاية..."></textarea>
       </div>
       <div class="bg-[#F6F8F6] p-3 rounded-xl space-y-1.5">
-        <label class="font-bold block">📸 صورة من الحقل (تُضغط تلقائياً لتوفير المساحة)</label>
+        <label class="font-bold block">📸 صورة من الحقل (تُضغط تلقائياً)</label>
         <input type="file" accept="image/*" capture="environment" onchange="handleVisitPhotoSelect(this)" class="text-xs w-full" />
         <div id="photoCompressStats" class="text-[11px] text-[#0E5A36] font-bold"></div>
       </div>
-      <button onclick="saveVisit()" class="btn-primary w-full py-3 text-sm">حفظ الزيارة الميدانية</button>
+      <button onclick="saveVisit()" class="btn-primary w-full py-3 text-sm">حفظ الزيارة وتحديث سجل المحطة والأصناف</button>
     </div>
   `);
+  if (preStation) renderStationTrialCheckboxes(preStation);
 }
 
 async function handleVisitPhotoSelect(input) {
@@ -1659,53 +1760,183 @@ async function handleVisitPhotoSelect(input) {
 async function saveVisit() {
   const notes = document.getElementById('vNotes').value.trim();
   if (!notes) return showToast('أدخل ملاحظات الزيارة');
+  const stationId = document.getElementById('vStation').value;
+  const customerId = document.getElementById('vCust').value;
+  const visitDate = todayStr(0);
+
+  // Collect inspected trial codes & update their timeline history + stage
+  const checkedBoxes = Array.from(document.querySelectorAll('.v-trial-chk:checked'));
+  const inspectedTrials = [];
+
+  for (const chk of checkedBoxes) {
+    const trialId = chk.value;
+    const trial = state.data.trials.find(t => t.id === trialId);
+    if (!trial) continue;
+    const newStage = document.getElementById(`vtStage_${trialId}`)?.value || trial.stage || 'نمو خضري';
+    const newScore = Math.min(5, Math.max(1, Number(document.getElementById(`vtScore_${trialId}`)?.value || calcTrialAvg(trial.scores))));
+    const itemNote = document.getElementById(`vtNote_${trialId}`)?.value.trim() || notes;
+
+    inspectedTrials.push({
+      trialId: trial.id,
+      code: trial.code,
+      hybridName: trial.hybridName,
+      stage: newStage,
+      avgScore: newScore,
+      note: itemNote
+    });
+
+    const history = Array.isArray(trial.history) ? [...trial.history] : [];
+    history.push({
+      date: visitDate,
+      stage: newStage,
+      avgScore: newScore,
+      notes: itemNote,
+      photo: tempCompressedPhoto || ''
+    });
+
+    trial.stage = newStage;
+    trial.scores = {
+      earliness: newScore,
+      vigor: newScore,
+      yield: newScore,
+      tolerance: newScore
+    };
+    trial.notes = itemNote;
+    trial.history = history;
+    await putRecord('trials', trial);
+  }
+
   await putRecord('visits', {
     id: uid('vis'),
-    date: todayStr(0),
-    customerId: document.getElementById('vCust').value,
-    stationId: document.getElementById('vStation').value,
+    date: visitDate,
+    customerId,
+    stationId,
     crop: document.getElementById('vCrop').value.trim(),
     nextFollowUp: document.getElementById('vNext').value,
+    inspectedTrials,
     notes,
     photo: tempCompressedPhoto
   });
+
   await loadAllData();
   closeModal();
   render();
-  showToast('تم حفظ الزيارة الميدانية');
+  showToast('تم حفظ الزيارة وتحديث سجل المحطة والأصناف');
 }
 
-// ==================== TRIALS, STATIONS & HYBRID RANKING ====================
+// ==================== TRIALS, STATIONS, TIMELINE & RANKING ====================
 function calcTrialAvg(scores) {
   if (!scores) return 0;
   const vals = [scores.earliness, scores.vigor, scores.yield, scores.tolerance].map(Number);
   return (vals.reduce((a, b) => a + b, 0) / 4);
 }
 
+function getStationStatusBadge(status) {
+  if (status === 'paused') return `<span class="badge-pill bg-amber-100 text-amber-800">⏸️ متوقفة مؤقتاً</span>`;
+  if (status === 'closed') return `<span class="badge-pill bg-gray-200 text-gray-700">🏁 منتهية</span>`;
+  return `<span class="badge-pill bg-emerald-100 text-emerald-800">🟢 نشطة</span>`;
+}
+
 function renderTrials() {
   const tab = state.trialsTab;
-  const rankedTrials = state.data.trials
+  const filteredTrials = state.data.trials.filter(t =>
+    state.trialStationFilter === 'all' || t.stationId === state.trialStationFilter
+  );
+  const rankedTrials = filteredTrials
     .map(t => ({ ...t, avgScore: calcTrialAvg(t.scores) }))
     .sort((a, b) => b.avgScore - a.avgScore);
 
   return `
     <div class="grid grid-cols-3 gap-1.5 bg-[#E7ECE8] p-1 rounded-2xl text-xs font-extrabold">
-      <button onclick="state.trialsTab='codes'; render();" class="py-2 rounded-xl ${tab==='codes' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🧬 أكواد التجارب</button>
-      <button onclick="state.trialsTab='stations'; render();" class="py-2 rounded-xl ${tab==='stations' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🏡 المحطات</button>
+      <button onclick="state.trialsTab='stations'; render();" class="py-2 rounded-xl ${tab==='stations' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🏡 المحطات (${state.data.stations.length})</button>
+      <button onclick="state.trialsTab='codes'; render();" class="py-2 rounded-xl ${tab==='codes' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🧬 أكواد التجارب (${state.data.trials.length})</button>
       <button onclick="state.trialsTab='ranking'; render();" class="py-2 rounded-xl ${tab==='ranking' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🏆 الترتيب</button>
     </div>
 
+    ${tab === 'stations' ? `
+      <button onclick="openStationModal()" class="btn-primary w-full py-3 text-sm">+ إضافة محطة تجارب جديدة</button>
+      <div class="space-y-3">
+        ${state.data.stations.length === 0 ? `<div class="m3-card p-6 text-center text-xs text-gray-500">لا توجد محطات مسجلة بعد</div>` :
+          state.data.stations.map(s => {
+            const stStatus = s.status || 'active';
+            const stTrials = state.data.trials.filter(t => t.stationId === s.id);
+            const stVisits = state.data.visits.filter(v => v.stationId === s.id);
+            return `
+              <div class="m3-card p-3.5 text-xs space-y-2.5 ${stStatus !== 'active' ? 'opacity-85 border-amber-200' : ''}">
+                <div class="flex items-start justify-between gap-2">
+                  <div>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="font-extrabold text-sm text-[#16211B]">${s.name}</span>
+                      ${getStationStatusBadge(stStatus)}
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-0.5">المسؤول: ${s.owner || '-'} • ${s.area || ''} • محصول: ${s.crop || '-'}</div>
+                    ${s.stopReason && stStatus !== 'active' ? `<div class="text-[11px] text-amber-800 mt-0.5">السبب: ${s.stopReason}</div>` : ''}
+                  </div>
+                </div>
+
+                <!-- Summary of Varieties & Visits in Station -->
+                <div class="bg-[#F6F8F6] p-2.5 rounded-xl space-y-1.5">
+                  <div class="flex items-center justify-between text-[11px] font-bold text-[#0E5A36]">
+                    <span>🧬 الأصناف بالمحطة (${stTrials.length})</span>
+                    <span>📍 الزيارات المسجلة (${stVisits.length})</span>
+                  </div>
+                  ${stTrials.length === 0
+                    ? `<div class="text-[11px] text-gray-500">لم يتم إضافة أصناف أو أكواد لهذه المحطة بعد.</div>`
+                    : `<div class="flex flex-wrap gap-1.5">
+                        ${stTrials.map(t => `
+                          <button onclick="openTrialHistoryModal('${t.id}')" class="bg-white border border-[#D3DDD7] px-2 py-1 rounded-lg text-[11px] font-bold text-[#16211B] flex items-center gap-1">
+                            <span class="text-[#0E5A36]">[${t.code}]</span>
+                            <span>${t.hybridName}</span>
+                            <span class="text-[10px] text-gray-500">(${t.stage || 'نمو'})</span>
+                          </button>
+                        `).join('')}
+                      </div>`
+                  }
+                </div>
+
+                <!-- Action Buttons for Station -->
+                <div class="grid grid-cols-2 gap-1.5 pt-1">
+                  <button onclick="openStationDetailModal('${s.id}')" class="btn-primary text-xs py-2">📂 ملف المحطة والسجل</button>
+                  <button onclick="openTrialModal('${s.id}')" class="btn-tonal text-xs py-2">+ إضافة صنف / كود</button>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  <button onclick="openNewVisitModal('', '${s.id}')" class="btn-tonal text-[11px] py-1.5 px-2.5 flex-1">+ تسجيل زيارة</button>
+                  <button onclick="openStationModal('${s.id}')" class="bg-gray-100 text-gray-700 rounded-xl text-[11px] font-bold px-2.5 py-1.5">✏️ تعديل</button>
+                  <button onclick="toggleStationStatusModal('${s.id}')" class="bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-[11px] font-bold px-2.5 py-1.5">
+                    ${stStatus === 'active' ? '⏸️ إيقاف' : '▶️ تفعيل'}
+                  </button>
+                  ${s.lat && s.lng ? `<a href="https://maps.google.com/?q=${s.lat},${s.lng}" target="_blank" class="bg-gray-100 rounded-xl text-[11px] font-bold px-2.5 py-1.5">🗺️</a>` : ''}
+                </div>
+              </div>
+            `;
+          })
+        }
+      </div>
+    ` : ''}
+
     ${tab === 'codes' ? `
-      <button onclick="openTrialModal()" class="btn-primary w-full py-3 text-sm">+ تسجيل كود هجين وتقييمه</button>
+      <div class="flex gap-2">
+        <button onclick="openTrialModal()" class="btn-primary flex-1 py-3 text-sm">+ تسجيل كود هجين وتقييمه</button>
+      </div>
+      <div>
+        <select onchange="state.trialStationFilter=this.value; render();" class="input-field text-xs py-2">
+          <option value="all" ${state.trialStationFilter==='all'?'selected':''}>فلترة حسب المحطة: كل المحطات (${state.data.trials.length})</option>
+          ${state.data.stations.map(s => `<option value="${s.id}" ${state.trialStationFilter===s.id?'selected':''}>محطة: ${s.name}</option>`).join('')}
+        </select>
+      </div>
       <div class="space-y-2.5">
-        ${state.data.trials.slice().reverse().map(t => {
+        ${filteredTrials.slice().reverse().map(t => {
           const sta = state.data.stations.find(s => s.id === t.stationId);
           const avg = calcTrialAvg(t.scores).toFixed(1);
+          const histCount = Array.isArray(t.history) ? t.history.length : 1;
           return `
             <div class="m3-card p-3.5 text-xs space-y-2">
               <div class="flex items-start justify-between">
                 <div>
-                  <span class="badge-pill bg-[#0E5A36] text-white">${t.code}</span>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="badge-pill bg-[#0E5A36] text-white">${t.code}</span>
+                    <span class="badge-pill bg-[#E6DFF2] text-[#2A1E3D]">${t.stage || 'نمو خضري'}</span>
+                  </div>
                   <div class="font-extrabold text-sm mt-1">${t.hybridName}</div>
                   <div class="text-[11px] text-gray-500">المحطة: ${sta ? sta.name : '-'} • مقابل: ${t.competitor || '-'}</div>
                 </div>
@@ -1721,27 +1952,14 @@ function renderTrials() {
                 <div>تحمل: <strong>${t.scores?.tolerance || 0}</strong></div>
               </div>
               <p class="text-[11px] text-gray-700">${t.notes || ''}</p>
+              <div class="flex gap-1.5 pt-1 border-t border-[#F0F4F1]">
+                <button onclick="openTrialHistoryModal('${t.id}')" class="btn-tonal text-[11px] py-1.5 flex-1">📈 تطور الصنف (${histCount})</button>
+                <button onclick="openTrialModal('${t.stationId || ''}', '${t.id}')" class="bg-gray-100 text-gray-700 rounded-xl text-[11px] font-bold px-3 py-1.5">✏️ تعديل</button>
+                ${sta ? `<button onclick="openStationDetailModal('${sta.id}')" class="bg-gray-100 text-gray-700 rounded-xl text-[11px] font-bold px-2.5 py-1.5">🏡 المحطة</button>` : ''}
+              </div>
             </div>
           `;
         }).join('')}
-      </div>
-    ` : ''}
-
-    ${tab === 'stations' ? `
-      <button onclick="openStationModal()" class="btn-primary w-full py-3 text-sm">+ إضافة محطة تجارب جديدة</button>
-      <div class="space-y-2.5">
-        ${state.data.stations.map(s => `
-          <div class="m3-card p-3.5 text-xs flex items-center justify-between gap-2">
-            <div>
-              <div class="font-extrabold text-sm">${s.name}</div>
-              <div class="text-[11px] text-gray-500">المسؤول: ${s.owner || '-'} • ${s.area || ''} • محصول: ${s.crop || ''}</div>
-            </div>
-            <div class="flex gap-1.5">
-              ${s.lat && s.lng ? `<a href="https://maps.google.com/?q=${s.lat},${s.lng}" target="_blank" class="btn-tonal text-xs py-1.5 px-2.5">🗺️</a>` : ''}
-              <button onclick="openNewVisitModal('', '${s.id}')" class="btn-primary text-xs py-1.5 px-2.5">+ زيارة</button>
-            </div>
-          </div>
-        `).join('')}
       </div>
     ` : ''}
 
@@ -1750,48 +1968,212 @@ function renderTrials() {
         <div class="font-extrabold text-sm text-[#0E5A36] mb-1">ترتيب الهجن التجريبية حسب الأداء الميداني</div>
         <p class="text-[11px] text-gray-500 mb-3">متوسط التقييم من 5 عبر (التبكير، قوة النمو، العقد والإنتاج، تحمل الأمراض).</p>
         <div class="space-y-2">
-          ${rankedTrials.map((t, idx) => `
-            <div class="flex items-center justify-between p-2.5 rounded-xl ${idx===0 ? 'bg-[#E2EFE7] border border-[#0E5A36]/30' : 'bg-[#F6F8F6]'}">
-              <div class="flex items-center gap-2.5">
-                <span class="w-6 h-6 rounded-full bg-[#0E5A36] text-white font-extrabold flex items-center justify-center text-xs">${idx + 1}</span>
-                <div>
-                  <div class="font-extrabold">${t.code} — ${t.hybridName}</div>
-                  <div class="text-[10px] text-gray-600">مقارنة بـ: ${t.competitor || 'غير محدد'}</div>
+          ${rankedTrials.map((t, idx) => {
+            const sta = state.data.stations.find(s => s.id === t.stationId);
+            return `
+              <div onclick="openTrialHistoryModal('${t.id}')" class="cursor-pointer flex items-center justify-between p-2.5 rounded-xl ${idx===0 ? 'bg-[#E2EFE7] border border-[#0E5A36]/30' : 'bg-[#F6F8F6]'}">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-6 h-6 rounded-full bg-[#0E5A36] text-white font-extrabold flex items-center justify-center text-xs">${idx + 1}</span>
+                  <div>
+                    <div class="font-extrabold">${t.code} — ${t.hybridName}</div>
+                    <div class="text-[10px] text-gray-600">المحطة: ${sta ? sta.name : '-'} • مقابل: ${t.competitor || '-'}</div>
+                  </div>
                 </div>
+                <div class="font-extrabold text-sm text-[#0E5A36]">${t.avgScore.toFixed(2)} ★</div>
               </div>
-              <div class="font-extrabold text-sm text-[#0E5A36]">${t.avgScore.toFixed(2)} ★</div>
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
         </div>
       </div>
     ` : ''}
   `;
 }
 
-function openStationModal() {
+// ==================== STATION PROFILE MODAL (VARIETIES + VISIT LOG + CONTROLS) ====================
+function openStationDetailModal(stationId, activeSubTab = 'varieties') {
+  const s = state.data.stations.find(x => x.id === stationId);
+  if (!s) return;
+  const stStatus = s.status || 'active';
+  const stTrials = state.data.trials.filter(t => t.stationId === stationId);
+  const stVisits = state.data.visits.filter(v => v.stationId === stationId).slice().reverse();
+
+  openModal(`
+    <div class="flex items-start justify-between mb-3 gap-2">
+      <div>
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <h3 class="font-extrabold text-base text-[#0E5A36]">${s.name}</h3>
+          ${getStationStatusBadge(stStatus)}
+        </div>
+        <div class="text-[11px] text-gray-500 mt-0.5">المسؤول: ${s.owner || '-'} • ${s.area || ''} • محصول: ${s.crop || '-'}</div>
+      </div>
+      <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
+    </div>
+
+    <div class="grid grid-cols-3 gap-1.5 bg-[#E7ECE8] p-1 rounded-xl text-[11px] font-extrabold mb-3">
+      <button onclick="openStationDetailModal('${stationId}', 'varieties')" class="py-1.5 rounded-lg ${activeSubTab==='varieties' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">🧬 الأصناف (${stTrials.length})</button>
+      <button onclick="openStationDetailModal('${stationId}', 'visits')" class="py-1.5 rounded-lg ${activeSubTab==='visits' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">📍 سجل الزيارات (${stVisits.length})</button>
+      <button onclick="openStationDetailModal('${stationId}', 'manage')" class="py-1.5 rounded-lg ${activeSubTab==='manage' ? 'bg-[#0E5A36] text-white' : 'text-[#4B5E53]'}">⚙️ إدارة المحطة</button>
+    </div>
+
+    ${activeSubTab === 'varieties' ? `
+      <div class="space-y-2.5 text-xs">
+        <button onclick="openTrialModal('${stationId}')" class="btn-primary w-full py-2.5 text-xs">+ إضافة صنف / كود هجين للمحطة</button>
+        ${stTrials.length === 0 ? `<div class="bg-[#F6F8F6] p-4 rounded-xl text-center text-gray-500">لا توجد أصناف مزروعة في هذه المحطة حتى الآن.</div>` :
+          stTrials.map(t => {
+            const avg = calcTrialAvg(t.scores).toFixed(1);
+            const histCount = Array.isArray(t.history) ? t.history.length : 1;
+            return `
+              <div class="border border-[#E2E8E4] rounded-2xl p-3 space-y-2">
+                <div class="flex items-start justify-between">
+                  <div>
+                    <span class="badge-pill bg-[#0E5A36] text-white">${t.code}</span>
+                    <span class="badge-pill bg-[#E6DFF2] text-[#2A1E3D]">${t.stage || 'نمو خضري'}</span>
+                    <div class="font-extrabold text-sm mt-1">${t.hybridName}</div>
+                    <div class="text-[11px] text-gray-500">مقارنة بـ: ${t.competitor || '-'} • زراعة: ${t.plantingDate || '-'}</div>
+                  </div>
+                  <div class="text-center bg-[#E2EFE7] px-2 py-1 rounded-xl font-extrabold text-[#0E5A36]">${avg}★</div>
+                </div>
+                <div class="text-[11px] text-gray-700 bg-[#F6F8F6] p-2 rounded-lg">${t.notes || 'لا توجد ملاحظات'}</div>
+                <div class="flex gap-1.5">
+                  <button onclick="openTrialHistoryModal('${t.id}')" class="btn-tonal text-[11px] py-1.5 flex-1">📈 حالة الصنف عبر الزيارات (${histCount})</button>
+                  <button onclick="openTrialModal('${stationId}', '${t.id}')" class="bg-gray-100 text-gray-700 rounded-xl text-[11px] font-bold px-3 py-1.5">✏️ تعديل</button>
+                </div>
+              </div>
+            `;
+          }).join('')
+        }
+      </div>
+    ` : ''}
+
+    ${activeSubTab === 'visits' ? `
+      <div class="space-y-2.5 text-xs">
+        <button onclick="openNewVisitModal('', '${stationId}')" class="btn-primary w-full py-2.5 text-xs">+ تسجيل زيارة جديدة لهذه المحطة</button>
+        ${stVisits.length === 0 ? `<div class="bg-[#F6F8F6] p-4 rounded-xl text-center text-gray-500">لا توجد زيارات مسجلة لهذه المحطة بعد.</div>` :
+          stVisits.map(v => {
+            const inspected = Array.isArray(v.inspectedTrials) ? v.inspectedTrials : [];
+            return `
+              <div class="border border-[#E2E8E4] rounded-2xl p-3 space-y-1.5">
+                <div class="flex items-center justify-between font-extrabold text-[#0E5A36]">
+                  <span>📅 زيارة بتاريخ ${v.date}</span>
+                  ${v.nextFollowUp ? `<span class="text-[10px] text-[#5E4B8B]">المتابعة: ${v.nextFollowUp}</span>` : ''}
+                </div>
+                ${inspected.length > 0 ? `
+                  <div class="space-y-1 bg-[#F6F8F6] p-2 rounded-xl">
+                    ${inspected.map(it => `
+                      <div class="text-[11px] border-b last:border-0 border-gray-200 pb-1 last:pb-0">
+                        <div class="flex justify-between font-bold">
+                          <span>[${it.code}] ${it.hybridName}</span>
+                          <span class="text-[#0E5A36]">${it.stage || ''} • ${Number(it.avgScore || 0).toFixed(1)}★</span>
+                        </div>
+                        ${it.note ? `<div class="text-[10px] text-gray-600">${it.note}</div>` : ''}
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+                <p class="text-[11px] text-gray-700 leading-relaxed">${v.notes}</p>
+                ${v.photo ? `<img src="${v.photo}" class="w-full h-36 object-cover rounded-xl border" />` : ''}
+              </div>
+            `;
+          }).join('')
+        }
+      </div>
+    ` : ''}
+
+    ${activeSubTab === 'manage' ? `
+      <div class="space-y-2.5 text-xs">
+        <button onclick="openStationModal('${stationId}')" class="btn-tonal w-full py-3 justify-between">
+          <span>✏️ تعديل بيانات المحطة (الاسم، المسؤول، المحصول، الموقع)</span><span>تعديل</span>
+        </button>
+        <button onclick="toggleStationStatusModal('${stationId}')" class="w-full py-3 px-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 font-extrabold flex items-center justify-between">
+          <span>${stStatus === 'active' ? '⏸️ إيقاف المحطة مؤقتاً أو إنهاؤها' : '▶️ إعادة تفعيل المحطة'}</span>
+          <span>تغيير الحالة</span>
+        </button>
+        ${s.lat && s.lng ? `<a href="https://maps.google.com/?q=${s.lat},${s.lng}" target="_blank" class="btn-tonal w-full py-3 justify-between"><span>🗺️ فتح موقع المحطة على خرائط جوجل</span><span>فتح</span></a>` : ''}
+      </div>
+    ` : ''}
+  `);
+}
+
+// ==================== TRIAL PROGRESSION TIMELINE MODAL ====================
+function openTrialHistoryModal(trialId) {
+  const t = state.data.trials.find(x => x.id === trialId);
+  if (!t) return;
+  const sta = state.data.stations.find(s => s.id === t.stationId);
+  const history = (Array.isArray(t.history) && t.history.length > 0)
+    ? t.history.slice().reverse()
+    : [{ date: t.plantingDate || todayStr(0), stage: t.stage || 'نمو خضري', avgScore: calcTrialAvg(t.scores), notes: t.notes || '' }];
+
+  openModal(`
+    <div class="flex items-start justify-between mb-3">
+      <div>
+        <span class="badge-pill bg-[#0E5A36] text-white">${t.code}</span>
+        <h3 class="font-extrabold text-base mt-1">${t.hybridName}</h3>
+        <div class="text-[11px] text-gray-500">المحطة: ${sta ? sta.name : '-'} • صنف المقارنة: ${t.competitor || '-'}</div>
+      </div>
+      <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
+    </div>
+
+    <div class="bg-[#E2EFE7] p-3 rounded-xl flex items-center justify-between text-xs mb-3">
+      <span>المرحلة الحالية: <strong>${t.stage || 'نمو خضري'}</strong></span>
+      <span>التقييم الحالي: <strong class="text-[#0E5A36]">${calcTrialAvg(t.scores).toFixed(1)} / 5 ★</strong></span>
+    </div>
+
+    <div class="font-extrabold text-xs text-[#0E5A36] mb-2">📈 سجل تطور حالة الصنف على مدار التجربة:</div>
+    <div class="space-y-2.5 text-xs mb-3">
+      ${history.map((h, i) => `
+        <div class="border-r-4 border-[#0E5A36] bg-[#F6F8F6] p-3 rounded-xl space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="font-extrabold text-[#0E5A36]">${h.date} — ${h.stage || ''}</span>
+            <span class="badge-pill bg-white text-[#0E5A36]">${Number(h.avgScore || 0).toFixed(1)} ★</span>
+          </div>
+          <p class="text-[11px] text-gray-700">${h.notes || ''}</p>
+          ${h.photo ? `<img src="${h.photo}" class="w-full h-36 object-cover rounded-lg mt-1" />` : ''}
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      ${sta ? `<button onclick="openNewVisitModal('', '${sta.id}')" class="btn-primary py-2.5">+ زيارة وتحديث الحالة</button>` : ''}
+      <button onclick="openTrialModal('${t.stationId || ''}', '${t.id}')" class="btn-tonal py-2.5">✏️ تعديل الصنف</button>
+    </div>
+  `);
+}
+
+function openStationModal(stationId = '') {
+  const s = state.data.stations.find(x => x.id === stationId) || {};
   openModal(`
     <div class="flex items-center justify-between mb-3">
-      <h3 class="font-extrabold text-base text-[#0E5A36]">إضافة محطة تجارب</h3>
+      <h3 class="font-extrabold text-base text-[#0E5A36]">${s.id ? 'تعديل بيانات محطة التجارب' : 'إضافة محطة تجارب جديدة'}</h3>
       <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
     </div>
     <div class="space-y-3 text-xs">
       <div>
         <label class="font-bold block mb-1">اسم المحطة / المزرعة *</label>
-        <input id="stName" class="input-field" placeholder="محطة تجارب كفر سعد" />
+        <input id="stName" value="${s.name || ''}" class="input-field" placeholder="محطة تجارب كفر سعد" />
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="font-bold block mb-1">المزارع / المهندس المسؤول</label>
-          <input id="stOwner" class="input-field" />
+          <input id="stOwner" value="${s.owner || ''}" class="input-field" />
         </div>
         <div>
           <label class="font-bold block mb-1">المحصول</label>
-          <input id="stCrop" class="input-field" placeholder="خيار / كوسة / طماطم" />
+          <input id="stCrop" value="${s.crop || ''}" class="input-field" placeholder="بروكلي / خيار / كوسة" />
         </div>
       </div>
-      <div>
-        <label class="font-bold block mb-1">المنطقة</label>
-        <input id="stArea" class="input-field" />
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="font-bold block mb-1">المنطقة</label>
+          <input id="stArea" value="${s.area || ''}" class="input-field" />
+        </div>
+        <div>
+          <label class="font-bold block mb-1">حالة المحطة</label>
+          <select id="stStatus" class="input-field">
+            <option value="active" ${(s.status||'active')==='active'?'selected':''}>🟢 نشطة</option>
+            <option value="paused" ${s.status==='paused'?'selected':''}>⏸️ متوقفة مؤقتاً</option>
+            <option value="closed" ${s.status==='closed'?'selected':''}>🏁 منتهية</option>
+          </select>
+        </div>
       </div>
       <div class="bg-[#F6F8F6] p-3 rounded-xl space-y-2">
         <div class="flex items-center justify-between">
@@ -1799,119 +2181,209 @@ function openStationModal() {
           <button type="button" onclick="captureGPS('stLat','stLng','stGps')" class="btn-tonal text-[11px] py-1 px-2.5">📍 التقاط</button>
         </div>
         <div class="grid grid-cols-2 gap-2">
-          <input id="stLat" placeholder="Latitude" class="input-field text-xs" />
-          <input id="stLng" placeholder="Longitude" class="input-field text-xs" />
+          <input id="stLat" value="${s.lat || ''}" placeholder="Latitude" class="input-field text-xs" />
+          <input id="stLng" value="${s.lng || ''}" placeholder="Longitude" class="input-field text-xs" />
         </div>
         <div id="stGps" class="text-[11px] text-[#0E5A36]"></div>
       </div>
-      <button onclick="saveStation()" class="btn-primary w-full py-3 text-sm">حفظ المحطة</button>
+      <button onclick="saveStation('${s.id || ''}')" class="btn-primary w-full py-3 text-sm">حفظ بيانات المحطة</button>
     </div>
   `);
 }
 
-async function saveStation() {
+async function saveStation(id = '') {
   const name = document.getElementById('stName').value.trim();
   if (!name) return showToast('أدخل اسم المحطة');
+  const existing = state.data.stations.find(x => x.id === id) || {};
   await putRecord('stations', {
-    id: uid('sta'),
+    ...existing,
+    id: id || uid('sta'),
     name,
     owner: document.getElementById('stOwner').value.trim(),
     crop: document.getElementById('stCrop').value.trim(),
     area: document.getElementById('stArea').value.trim(),
+    status: document.getElementById('stStatus').value,
     lat: document.getElementById('stLat').value.trim(),
     lng: document.getElementById('stLng').value.trim()
   });
   await loadAllData();
   closeModal();
   render();
-  showToast('تم حفظ محطة التجارب');
+  showToast('تم حفظ بيانات محطة التجارب');
 }
 
-function openTrialModal() {
+function toggleStationStatusModal(stationId) {
+  const s = state.data.stations.find(x => x.id === stationId);
+  if (!s) return;
   openModal(`
     <div class="flex items-center justify-between mb-3">
-      <h3 class="font-extrabold text-base text-[#0E5A36]">تسجيل كود تجربة هجين</h3>
+      <h3 class="font-extrabold text-base text-[#0E5A36]">تغيير حالة المحطة: ${s.name}</h3>
       <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
     </div>
     <div class="space-y-3 text-xs">
+      <div>
+        <label class="font-bold block mb-1">اختر الحالة الجديدة</label>
+        <select id="chgStStatus" class="input-field">
+          <option value="active" ${(s.status||'active')==='active'?'selected':''}>🟢 نشطة (مستمرة في المتابعة)</option>
+          <option value="paused" ${s.status==='paused'?'selected':''}>⏸️ إيقاف مؤقت للمحطة</option>
+          <option value="closed" ${s.status==='closed'?'selected':''}>🏁 إنهاء / إغلاق التجربة بالمحطة</option>
+        </select>
+      </div>
+      <div>
+        <label class="font-bold block mb-1">سبب الإيقاف أو ملاحظة الإغلاق (اختياري)</label>
+        <input id="chgStReason" value="${s.stopReason || ''}" class="input-field" placeholder="مثال: انتهاء موسم الجمع / ظروف مناخية..." />
+      </div>
+      <button onclick="applyStationStatus('${stationId}')" class="btn-primary w-full py-3 text-sm">حفظ الحالة الجديدة</button>
+    </div>
+  `);
+}
+
+async function applyStationStatus(stationId) {
+  const s = state.data.stations.find(x => x.id === stationId);
+  if (!s) return;
+  s.status = document.getElementById('chgStStatus').value;
+  s.stopReason = document.getElementById('chgStReason').value.trim();
+  await putRecord('stations', s);
+  await loadAllData();
+  closeModal();
+  render();
+  showToast('تم تحديث حالة المحطة بنجاح');
+}
+
+function fillTrialFromInventory(productId) {
+  if (!productId) return;
+  const p = state.data.products.find(x => x.id === productId);
+  if (!p) return;
+  const codeEl = document.getElementById('tCode');
+  const nameEl = document.getElementById('tName');
+  if (codeEl && !codeEl.value) codeEl.value = p.code;
+  if (nameEl && !nameEl.value) nameEl.value = p.name;
+}
+
+function openTrialModal(preStationId = '', trialId = '') {
+  const t = state.data.trials.find(x => x.id === trialId) || {};
+  const targetStation = preStationId || t.stationId || (state.data.stations[0]?.id || '');
+  openModal(`
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-extrabold text-base text-[#0E5A36]">${t.id ? 'تعديل كود / صنف تجربة' : 'إضافة صنف / كود هجين للمحطة'}</h3>
+      <button onclick="closeModal()" class="text-gray-400 text-xl font-bold">✕</button>
+    </div>
+    <div class="space-y-3 text-xs">
+      <div>
+        <label class="font-bold block mb-1">المحطة المزروع بها *</label>
+        <select id="tStation" class="input-field">
+          ${state.data.stations.map(s => `<option value="${s.id}" ${s.id===targetStation?'selected':''}>${s.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="font-bold block mb-1">اختيار سريع من أصناف المخزن (اختياري)</label>
+        <select id="tInvPick" onchange="fillTrialFromInventory(this.value)" class="input-field">
+          <option value="">-- أو أدخل كود وهجين جديد يدوياً بالأسفل --</option>
+          ${state.data.products.map(p => `<option value="${p.id}" ${p.id===t.productId?'selected':''}>[${p.code}] ${p.name}</option>`).join('')}
+        </select>
+      </div>
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="font-bold block mb-1">كود التجربة *</label>
-          <input id="tCode" class="input-field" placeholder="AP-SQ-205" />
+          <input id="tCode" value="${t.code || ''}" class="input-field" placeholder="مثال: 66 أو AP-205" />
         </div>
         <div>
-          <label class="font-bold block mb-1">المحطة</label>
-          <select id="tStation" class="input-field">
-            ${state.data.stations.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+          <label class="font-bold block mb-1">مرحلة / حالة الصنف</label>
+          <select id="tStage" class="input-field">
+            ${TRIAL_STAGES.map(st => `<option value="${st}" ${(t.stage||'إنبات / مشتل')===st?'selected':''}>${st}</option>`).join('')}
           </select>
         </div>
       </div>
       <div>
         <label class="font-bold block mb-1">اسم الصنف / الهجين *</label>
-        <input id="tName" class="input-field" placeholder="هجين كوسة تجريبي 205" />
+        <input id="tName" value="${t.hybridName || ''}" class="input-field" placeholder="مثال: بروكلي / هجين كوسة 205" />
       </div>
       <div>
         <label class="font-bold block mb-1">صنف المقارنة التجاري (Control)</label>
-        <input id="tComp" class="input-field" placeholder="اسم الصنف المنافس المزروع بجانبه" />
+        <input id="tComp" value="${t.competitor || ''}" class="input-field" placeholder="اسم الصنف المنافس المزروع بجانبه" />
       </div>
       <div class="bg-[#F6F8F6] p-3 rounded-xl space-y-2">
         <div class="font-extrabold text-[#0E5A36]">بطاقة التقييم الرقمي (من 1 إلى 5)</div>
         <div class="grid grid-cols-2 gap-2">
-          <div><label>التبكير (1-5)</label><input id="scEar" type="number" min="1" max="5" value="4" class="input-field py-1" /></div>
-          <div><label>قوة المجموع الخضري</label><input id="scVig" type="number" min="1" max="5" value="4" class="input-field py-1" /></div>
-          <div><label>العقد والإنتاجية</label><input id="scYld" type="number" min="1" max="5" value="4" class="input-field py-1" /></div>
-          <div><label>تحمل الأمراض</label><input id="scTol" type="number" min="1" max="5" value="4" class="input-field py-1" /></div>
+          <div><label>التبكير (1-5)</label><input id="scEar" type="number" min="1" max="5" value="${t.scores?.earliness ?? 4}" class="input-field py-1" /></div>
+          <div><label>قوة المجموع الخضري</label><input id="scVig" type="number" min="1" max="5" value="${t.scores?.vigor ?? 4}" class="input-field py-1" /></div>
+          <div><label>العقد والإنتاجية</label><input id="scYld" type="number" min="1" max="5" value="${t.scores?.yield ?? 4}" class="input-field py-1" /></div>
+          <div><label>تحمل الأمراض</label><input id="scTol" type="number" min="1" max="5" value="${t.scores?.tolerance ?? 4}" class="input-field py-1" /></div>
         </div>
       </div>
-      <div class="bg-emerald-50/70 p-2.5 rounded-xl space-y-1.5">
-        <label class="font-bold block">صرف عينة من المخزن (اختياري)</label>
-        <div class="grid grid-cols-3 gap-1.5">
-          <select id="tSampleProd" class="input-field py-1 text-[11px] col-span-2">
-            <option value="">-- بدون خصم مخزني --</option>
-            ${state.data.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-          </select>
-          <input id="tSampleQty" type="number" value="1" min="1" class="input-field py-1 text-[11px]" />
+      ${!t.id ? `
+        <div class="bg-emerald-50/70 p-2.5 rounded-xl space-y-1.5">
+          <label class="font-bold block">صرف عينة من المخزن (اختياري)</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            <select id="tSampleProd" class="input-field py-1 text-[11px] col-span-2">
+              <option value="">-- بدون خصم مخزني --</option>
+              ${state.data.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
+            </select>
+            <input id="tSampleQty" type="number" value="1" min="1" class="input-field py-1 text-[11px]" />
+          </div>
         </div>
-      </div>
+      ` : ''}
       <div>
         <label class="font-bold block mb-1">ملاحظات الأداء</label>
-        <textarea id="tNotes" rows="2" class="input-field"></textarea>
+        <textarea id="tNotes" rows="2" class="input-field">${t.notes || ''}</textarea>
       </div>
-      <button onclick="saveTrial()" class="btn-primary w-full py-3 text-sm">حفظ التجربة والتقييم</button>
+      <button onclick="saveTrial('${t.id || ''}')" class="btn-primary w-full py-3 text-sm">حفظ الصنف والتقييم</button>
     </div>
   `);
 }
 
-async function saveTrial() {
+async function saveTrial(id = '') {
   const code = document.getElementById('tCode').value.trim();
   const hybridName = document.getElementById('tName').value.trim();
   if (!code || !hybridName) return showToast('أدخل كود واسم الهجين');
 
-  const sampleProd = document.getElementById('tSampleProd').value;
-  const sampleQty = Number(document.getElementById('tSampleQty').value || 0);
-  if (sampleProd && sampleQty > 0 && state.data.warehouses[0]) {
-    await adjustStock(state.data.warehouses[0].id, sampleProd, -sampleQty);
+  const existing = state.data.trials.find(x => x.id === id) || {};
+
+  if (!id) {
+    const sampleEl = document.getElementById('tSampleProd');
+    const sampleProd = sampleEl ? sampleEl.value : '';
+    const sampleQty = Number(document.getElementById('tSampleQty')?.value || 0);
+    if (sampleProd && sampleQty > 0 && state.data.warehouses[0]) {
+      await adjustStock(state.data.warehouses[0].id, sampleProd, -sampleQty);
+    }
   }
 
+  const stage = document.getElementById('tStage').value;
+  const scores = {
+    earliness: Math.min(5, Math.max(1, Number(document.getElementById('scEar').value || 3))),
+    vigor: Math.min(5, Math.max(1, Number(document.getElementById('scVig').value || 3))),
+    yield: Math.min(5, Math.max(1, Number(document.getElementById('scYld').value || 3))),
+    tolerance: Math.min(5, Math.max(1, Number(document.getElementById('scTol').value || 3)))
+  };
+  const notes = document.getElementById('tNotes').value.trim();
+  const avg = calcTrialAvg(scores);
+
+  const history = Array.isArray(existing.history) ? [...existing.history] : [];
+  history.push({
+    date: todayStr(0),
+    stage,
+    avgScore: avg,
+    notes: notes || (id ? 'تحديث بيانات وتقييم الصنف' : 'تسجيل الصنف بالمحطة')
+  });
+
   await putRecord('trials', {
-    id: uid('trl'),
+    ...existing,
+    id: id || uid('trl'),
     code,
     hybridName,
     stationId: document.getElementById('tStation').value,
+    productId: document.getElementById('tInvPick').value || existing.productId || '',
     competitor: document.getElementById('tComp').value.trim(),
-    plantingDate: todayStr(0),
-    scores: {
-      earliness: Math.min(5, Math.max(1, Number(document.getElementById('scEar').value || 3))),
-      vigor: Math.min(5, Math.max(1, Number(document.getElementById('scVig').value || 3))),
-      yield: Math.min(5, Math.max(1, Number(document.getElementById('scYld').value || 3))),
-      tolerance: Math.min(5, Math.max(1, Number(document.getElementById('scTol').value || 3)))
-    },
-    notes: document.getElementById('tNotes').value.trim()
+    plantingDate: existing.plantingDate || todayStr(0),
+    stage,
+    scores,
+    notes,
+    history
   });
   await loadAllData();
   closeModal();
   render();
-  showToast('تم حفظ كود التجربة وتحديث الترتيب');
+  showToast('تم حفظ الصنف وتحديث سجل المحطة');
 }
 
 // ==================== FINANCE & TREASURY ====================
@@ -2049,7 +2521,7 @@ function renderReports() {
         <span>📦 تقرير جرد المخازن والنواقص</span><span>تحميل CSV</span>
       </button>
       <button onclick="exportTrialsReport()" class="btn-tonal w-full py-3 justify-between">
-        <span>🧪 تقرير تقييم وترتيب أكواد التجارب</span><span>تحميل CSV</span>
+        <span>🧪 تقرير تقييم وترتيب أكواد التجارب والمحطات</span><span>تحميل CSV</span>
       </button>
     </div>
   `;
@@ -2086,9 +2558,10 @@ function exportStockReport() {
 }
 
 function exportTrialsReport() {
-  let csv = '\uFEFFالكود,اسم الهجين,صنف المقارنة,التبكير,قوة النمو,العقد,التحمل,المتوسط\n';
+  let csv = '\uFEFFالكود,اسم الهجين,المحطة,المرحلة الحالية,صنف المقارنة,التبكير,قوة النمو,العقد,التحمل,المتوسط\n';
   state.data.trials.forEach(t => {
-    csv += `"${t.code}","${t.hybridName}","${t.competitor||''}",${t.scores?.earliness||0},${t.scores?.vigor||0},${t.scores?.yield||0},${t.scores?.tolerance||0},${calcTrialAvg(t.scores).toFixed(2)}\n`;
+    const sta = state.data.stations.find(s => s.id === t.stationId);
+    csv += `"${t.code}","${t.hybridName}","${sta ? sta.name : ''}","${t.stage || ''}","${t.competitor||''}",${t.scores?.earliness||0},${t.scores?.vigor||0},${t.scores?.yield||0},${t.scores?.tolerance||0},${calcTrialAvg(t.scores).toFixed(2)}\n`;
   });
   downloadFile(csv, `تقييم_التجارب_${todayStr(0)}.csv`, 'text/csv;charset=utf-8;');
 }
@@ -2247,6 +2720,7 @@ function backspacePin() {
   checkPinOnStartup();
   render();
 })();
+
 </script>
 </body>
 </html>
