@@ -1,9 +1,10 @@
-const CACHE_NAME = 'fieldos-pwa-v2';
+const CACHE_NAME = 'fieldos-pwa-v3';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  './icon.svg'
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
