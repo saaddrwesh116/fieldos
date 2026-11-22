@@ -1,7 +1,7 @@
 {
-  "name": "AGRI PYRAMIDS • FieldOS v13 LTS",
+  "name": "AGRI PYRAMIDS • FieldOS v14",
   "short_name": "AGRI PYRAMIDS",
-  "description": "نظام إدارة المبيعات والمخازن ومحطات التجارب الزراعية - إصدار الاستقرار النهائي v13 LTS",
+  "description": "نظام إدارة المبيعات والمخازن ومحطات التجارب الزراعية - الإصدار الذكي المتكامل v14",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
