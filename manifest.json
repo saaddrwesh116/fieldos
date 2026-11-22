@@ -1,7 +1,7 @@
 {
-  "name": "AGRI PYRAMIDS • FieldOS v16",
+  "name": "AGRI PYRAMIDS • FieldOS v15",
   "short_name": "AGRI PYRAMIDS",
-  "description": "نظام إدارة المبيعات والمخازن ومحطات التجارب الزراعية - v16 Pro",
+  "description": "نظام إدارة المبيعات والمخازن ومحطات التجارب الزراعية - v15 Pro",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
