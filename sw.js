@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fieldos-pwa-v16-pro';
+const CACHE_NAME = 'fieldos-pwa-v17-pro';
 const CORE_ASSETS = [
   './',
   './index.html',
